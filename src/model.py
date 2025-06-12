@@ -99,7 +99,7 @@ feature_cols = [
 seasons = sorted(df["Season"].unique())
 all_results = []
 
-for i in range(3, len(seasons)-1):  # Start after first few seasons to give training data
+for i in range(3, len(seasons)):  # Start after first few seasons to give training data
     
     train_seasons = seasons[:i]
     test_season = seasons[i]
@@ -145,9 +145,14 @@ for i in range(3, len(seasons)-1):  # Start after first few seasons to give trai
         num_class=3,
         eval_metric='mlogloss',
         n_estimators=300,
-        max_depth=6,
-        learning_rate=0.1,
-        random_state=42
+        max_depth=5,
+        learning_rate=0.02,
+        random_state=42,
+        colsample_bytree=0.5,
+        gamma=2,
+        reg_alpha=1,
+        reg_lambda=3,
+        subsample=0.9,
     )
     outcome_model.fit(X_train, y_class_train)
     y_class_pred = outcome_model.predict(X_test)
@@ -157,9 +162,14 @@ for i in range(3, len(seasons)-1):  # Start after first few seasons to give trai
     home_model = XGBRegressor(
         objective='reg:squarederror',
         n_estimators=300,
-        max_depth=6,
-        learning_rate=0.1,
-        random_state=42
+        max_depth=5,
+        learning_rate=0.02,
+        random_state=42,
+        colsample_bytree=0.5,
+        gamma=2,
+        reg_alpha=1,
+        reg_lambda=3,
+        subsample=0.9,
     )
     home_model.fit(X_train, y_home_train)
     y_home_pred = home_model.predict(X_test)
@@ -169,9 +179,13 @@ for i in range(3, len(seasons)-1):  # Start after first few seasons to give trai
     away_model = XGBRegressor(
         objective='reg:squarederror',
         n_estimators=300,
-        max_depth=6,
-        learning_rate=0.1,
-        random_state=42
+        max_depth=5,
+        learning_rate=0.02,
+        random_state=42,
+        gamma=2,
+        reg_alpha=1,
+        reg_lambda=3,
+        subsample=0.9,
     )
     away_model.fit(X_train, y_away_train)
     y_away_pred = away_model.predict(X_test)
