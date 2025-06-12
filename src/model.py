@@ -1,10 +1,8 @@
 import pandas as pd
 import numpy as np 
 
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from xgboost import XGBClassifier, XGBRegressor
-from sklearn.metrics import classification_report, root_mean_squared_error
-from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import root_mean_squared_error
 
 
 df = pd.read_csv("../data/final_premier_league.csv")
@@ -17,10 +15,9 @@ df["MatchOutcome"] = df["FullTimeResult"].map(outcome_mapping)
 # regression target variables
 df["HomeGoals"] = df["FullTimeHomeTeamGoals"]
 df["AwayGoals"] = df["FullTimeAwayTeamGoals"]
-df["HomePoints"] = df["MatchOutcome"].map({2: 3, 1: 1, 0: 0})
-df["AwayPoints"] = df["MatchOutcome"].map({0: 3, 1: 1, 2: 0})
 
 # target encoding for matchup
+df["HomePoints"] = df["MatchOutcome"].map({2: 3, 1: 1, 0: 0})
 matchup_target_encoding = (
     df.groupby("Matchup")["HomePoints"].agg(["mean", "count"])
 ).reset_index()
@@ -28,23 +25,6 @@ matchup_target_encoding.rename(columns={"mean": "MatchupAvgPoints", "count": "Ma
 df = df.merge(matchup_target_encoding, on="Matchup", how="left")
 league_avg_points = df["HomePoints"].mean()
 df["MatchupAvgPoints"].fillna(league_avg_points, inplace=True)
-
-# target encoding for team-level point averages per game
-# home_team_encoding = (
-#     df.groupby("HomeTeam")["HomePoints"].mean().reset_index()
-# )
-# home_team_encoding.rename(columns={"HomePoints": "HomeTeamAvgPoints"}, inplace=True)
-# df = df.merge(home_team_encoding, on="HomeTeam", how="left")
-
-# away_team_encoding = (
-#     df.groupby("AwayTeam")["AwayPoints"].mean().reset_index()
-# )
-# away_team_encoding.rename(columns={"AwayPoints": "AwayTeamAvgPoints"}, inplace=True)
-# df = df.merge(away_team_encoding, on="AwayTeam", how="left")
-
-# league_avg_points = df["HomePoints"].mean()
-# df["HomeTeamAvgPoints"].fillna(league_avg_points, inplace=True)
-# df["AwayTeamAvgPoints"].fillna(league_avg_points, inplace=True)
 
 
 feature_cols = [
@@ -121,24 +101,6 @@ for i in range(3, len(seasons)):  # Start after first few seasons to give traini
     y_away_train = train_df["AwayGoals"]
     y_away_test = test_df["AwayGoals"]
     
-    # # Outcome Model
-    # outcome_model = RandomForestClassifier(n_estimators=300, max_depth=10, random_state=42)
-    # outcome_model.fit(X_train, y_class_train)
-    # y_class_pred = outcome_model.predict(X_test)
-    # class_acc = np.mean(y_class_pred == y_class_test)
-    
-    # # Home Goals Model
-    # home_model = RandomForestRegressor(n_estimators=300, max_depth=10, random_state=42)
-    # home_model.fit(X_train, y_home_train)
-    # y_home_pred = home_model.predict(X_test)
-    # home_rmse = root_mean_squared_error(y_home_test, y_home_pred)
-
-    # # Away Goals Model
-    # away_model = RandomForestRegressor(n_estimators=300, max_depth=10, random_state=42)
-    # away_model.fit(X_train, y_away_train)
-    # y_away_pred = away_model.predict(X_test)
-    # away_rmse = root_mean_squared_error(y_away_test, y_away_pred)
-    
     # --- Outcome model (XGBoost Classification) ---
     outcome_model = XGBClassifier(
         objective='multi:softprob',
@@ -156,7 +118,25 @@ for i in range(3, len(seasons)):  # Start after first few seasons to give traini
     )
     outcome_model.fit(X_train, y_class_train)
     y_class_pred = outcome_model.predict(X_test)
+    y_class_proba = outcome_model.predict_proba(X_test)
     class_acc = np.mean(y_class_pred == y_class_test)
+    
+    brier_total = 0
+
+    for i in range(len(y_class_test)):
+        true_outcome = y_class_test.iloc[i]  # 0=A, 1=D, 2=H
+        proba_vector = y_class_proba[i]      # predicted [A, D, H] probabilities
+
+        # Build true outcome one-hot encoding
+        true_vector = np.zeros(3)
+        true_vector[true_outcome] = 1
+
+        # Brier score for this match
+        brier = np.sum((proba_vector - true_vector) ** 2)
+        brier_total += brier
+
+    # Average Brier score for the test season
+    brier_score = brier_total / len(y_class_test)
     
     # --- Home Goals model (XGBoost Regression) ---
     home_model = XGBRegressor(
@@ -173,6 +153,7 @@ for i in range(3, len(seasons)):  # Start after first few seasons to give traini
     )
     home_model.fit(X_train, y_home_train)
     y_home_pred = home_model.predict(X_test)
+    y_home_pred_discrete = np.round(y_home_pred).astype(int)
     home_rmse = root_mean_squared_error(y_home_test, y_home_pred)
     
     # --- Away Goals model (XGBoost Regression) ---
@@ -189,7 +170,12 @@ for i in range(3, len(seasons)):  # Start after first few seasons to give traini
     )
     away_model.fit(X_train, y_away_train)
     y_away_pred = away_model.predict(X_test)
+    y_away_pred_discrete = np.round(y_away_pred).astype(int)
     away_rmse = root_mean_squared_error(y_away_test, y_away_pred)
+    
+    # evaluate strictly correct prediction of scoreline
+    scoreline_accuracy = np.mean((y_home_pred_discrete == y_home_test) & (y_away_pred_discrete == y_away_test))
+    print(f"Scoreline prediction accuracy: {scoreline_accuracy:.4f}")
     
     # Store results
     all_results.append({
@@ -197,10 +183,11 @@ for i in range(3, len(seasons)):  # Start after first few seasons to give traini
         "TestSeason": test_season,
         "OutcomeAccuracy": class_acc,
         "HomeGoalsRMSE": home_rmse,
-        "AwayGoalsRMSE": away_rmse
+        "AwayGoalsRMSE": away_rmse,
+        "BrierScore": brier_score,
     })
     
-    print(f"Test season {test_season}: Acc={class_acc:.3f}, HomeRMSE={home_rmse:.3f}, AwayRMSE={away_rmse:.3f}")
+    print(f"Test season {test_season}: Acc={class_acc:.3f}, HomeRMSE={home_rmse:.3f}, AwayRMSE={away_rmse:.3f}, Brier={brier_score:.3f},")
     
 result_df = pd.DataFrame(all_results)
 print(result_df)
